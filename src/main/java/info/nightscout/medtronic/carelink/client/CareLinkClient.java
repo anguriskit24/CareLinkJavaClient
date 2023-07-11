@@ -16,11 +16,16 @@ public class CareLinkClient {
 
     protected static final String CARELINK_CONNECT_SERVER_EU = "carelink.minimed.eu";
     protected static final String CARELINK_CONNECT_SERVER_US = "carelink.minimed.com";
+    protected static final String CARELINK_LOGIN_SERVER_EU   = "mdtlogin-ocl.medtronic.com";
+    protected static final String CARELINK_LOGIN_SERVER_US   = "mdtlogin.medtronic.com";
+
     protected static final String CARELINK_LANGUAGE_EN = "en";
     protected static final String CARELINK_LOCALE_EN = "en";
-    protected static final String CARELINK_AUTH_TOKEN_COOKIE_NAME = "auth_tmp_token";
-    protected static final String CARELINK_TOKEN_VALIDTO_COOKIE_NAME = "c_token_valid_to";
+    public static final String CARELINK_AUTH_TOKEN_COOKIE_NAME = "auth_tmp_token";
+    public static final String CARELINK_TOKEN_VALIDTO_COOKIE_NAME = "c_token_valid_to";
     protected static final int AUTH_EXPIRE_DEADLINE_MINUTES = 1;
+
+    protected static final String COOKIE_FILE_SYSTEM_PATH = "./cookies.txt";
 
     //Authentication data
     protected String carelinkUsername;
@@ -71,7 +76,7 @@ public class CareLinkClient {
         } catch (Exception ex){}
     }
     protected void setLastResponseBody(String responseBody){
-            this.lastResponseBody = responseBody;
+        this.lastResponseBody = responseBody;
     }
     public String getLastResponseBody(){
         return lastResponseBody;
@@ -110,7 +115,7 @@ public class CareLinkClient {
 
         // Create main http client with CookieJar
         this.httpClient = new OkHttpClient.Builder()
-                .cookieJar(new SimpleOkHttpCookieJar())
+                .cookieJar(new PersistableOkHttpCookieJar(COOKIE_FILE_SYSTEM_PATH))
                 .connectionPool(new ConnectionPool(5, 10, TimeUnit.MINUTES))
                 .build();
     }
@@ -137,9 +142,13 @@ public class CareLinkClient {
 
     // Get server URL
     protected String careLinkServer() {
-       return this.carelinkCountry.equals("us") ? CARELINK_CONNECT_SERVER_US : CARELINK_CONNECT_SERVER_EU;
+        return this.carelinkCountry.equals("us") ? CARELINK_CONNECT_SERVER_US : CARELINK_CONNECT_SERVER_EU;
     }
 
+    // Get login server URL
+    protected String careLinkLoginServer() {
+        return this.carelinkCountry.equals("us") ? CARELINK_LOGIN_SERVER_US : CARELINK_LOGIN_SERVER_EU;
+    }
 
     // Authentication methods
     public boolean login(){
@@ -159,8 +168,8 @@ public class CareLinkClient {
         lastErrorMessage = null;
 
         try {
-            // Clear cookies
-            ((SimpleOkHttpCookieJar) this.httpClient.cookieJar()).deleteAllCookies();
+
+            // TODO: Code to check for existing token
 
             // Clear basic infos
             this.sessionUser = null;
@@ -220,6 +229,8 @@ public class CareLinkClient {
                 .addQueryParameter("country", this.carelinkCountry).addQueryParameter("lang", CARELINK_LANGUAGE_EN)
                 .build();
 
+        System.out.println("url: " + url);
+
         requestBuilder = new Request.Builder().url(url);
 
         this.addHttpHeaders(requestBuilder, RequestType.HtmlGet);
@@ -244,7 +255,7 @@ public class CareLinkClient {
                 .add("actionButton", "Log in")
                 .build();
 
-        url = new HttpUrl.Builder().scheme("https").host("mdtlogin.medtronic.com")
+        url = new HttpUrl.Builder().scheme("https").host(this.careLinkLoginServer())
                 .addPathSegments("mmcl/auth/oauth/v2/authorize/login").addQueryParameter("locale", CARELINK_LOCALE_EN)
                 .addQueryParameter("country", this.carelinkCountry).build();
 
@@ -289,14 +300,16 @@ public class CareLinkClient {
         // New token is needed:
         // a) no token or about to expire => execute authentication
         // b) last response 401
-        if (!((SimpleOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_AUTH_TOKEN_COOKIE_NAME)
-                || !((SimpleOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_TOKEN_VALIDTO_COOKIE_NAME)
-                || !((new Date(Date.parse(((SimpleOkHttpCookieJar) httpClient.cookieJar())
+        if (!((PersistableOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_AUTH_TOKEN_COOKIE_NAME)
+                || !((PersistableOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_TOKEN_VALIDTO_COOKIE_NAME)
+                || !((new Date(Date.parse(((PersistableOkHttpCookieJar) httpClient.cookieJar())
                 .getCookies(CARELINK_TOKEN_VALIDTO_COOKIE_NAME).get(0).value())))
                 .after(new Date(new Date(System.currentTimeMillis()).getTime()
                         + AUTH_EXPIRE_DEADLINE_MINUTES * 60000)))
                 || this.lastResponseCode == 401
         ) {
+            // TODO: How to skip login if already have token
+
             //execute new login process | null, if error OR already doing login
             if(this.loginInProcess || !this.executeLoginProcedure())
                 return null;
@@ -304,7 +317,7 @@ public class CareLinkClient {
         }
 
         // there can be only one
-        return "Bearer" + " " + ((SimpleOkHttpCookieJar) httpClient.cookieJar()).getCookies(CARELINK_AUTH_TOKEN_COOKIE_NAME).get(0).value();
+        return "Bearer" + " " + ((PersistableOkHttpCookieJar) httpClient.cookieJar()).getCookies(CARELINK_AUTH_TOKEN_COOKIE_NAME).get(0).value();
 
     }
 
