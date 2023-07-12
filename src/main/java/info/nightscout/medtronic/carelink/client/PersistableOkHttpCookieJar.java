@@ -79,7 +79,7 @@ public class PersistableOkHttpCookieJar implements CookieJar {
             for (Cookie cookie : cookies) {
 
                 // if cookie is new, add to memory storage
-                if(!this.storage.contains(cookie.name())) {
+                if(!this.contains(cookie.name())) {
 
                     this.storage.add(cookie);
                     // If carelink cookie, save to file
