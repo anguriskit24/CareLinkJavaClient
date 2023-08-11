@@ -21,11 +21,11 @@ public class CareLinkClient {
 
     protected static final String CARELINK_LANGUAGE_EN = "en";
     protected static final String CARELINK_LOCALE_EN = "en";
-    public static final String CARELINK_AUTH_TOKEN_COOKIE_NAME = "auth_tmp_token";
-    public static final String CARELINK_TOKEN_VALIDTO_COOKIE_NAME = "c_token_valid_to";
+    public static final    String CARELINK_AUTH_TOKEN_COOKIE_NAME =    "auth_tmp_token";
+    public static final    String CARELINK_TOKEN_VALIDTO_COOKIE_NAME = "c_token_valid_to";
+    protected static final String CARELINK_AUTH_PATH_SEGMENT =  "patient/sso/reauth";
+    protected static final String CARELINK_LOGIN_PATH_SEGMENT = "patient/sso/login";
     protected static final int AUTH_EXPIRE_DEADLINE_MINUTES = 1;
-
-    protected static final String COOKIE_FILE_SYSTEM_PATH = "./cookies.txt";
 
     //Authentication data
     protected String carelinkUsername;
@@ -115,7 +115,7 @@ public class CareLinkClient {
 
         // Create main http client with CookieJar
         this.httpClient = new OkHttpClient.Builder()
-                .cookieJar(new PersistableOkHttpCookieJar(COOKIE_FILE_SYSTEM_PATH))
+                .cookieJar(new SimpleOkHttpCookieJar())
                 .connectionPool(new ConnectionPool(5, 10, TimeUnit.MINUTES))
                 .build();
     }
@@ -168,8 +168,8 @@ public class CareLinkClient {
         lastErrorMessage = null;
 
         try {
-
-            // TODO: Code to check for existing token
+            // Clear cookies
+            ((SimpleOkHttpCookieJar) this.httpClient.cookieJar()).deleteAllCookies();
 
             // Clear basic infos
             this.sessionUser = null;
@@ -225,11 +225,9 @@ public class CareLinkClient {
         HttpUrl url = null;
         Request.Builder requestBuilder = null;
 
-        url = new HttpUrl.Builder().scheme("https").host(this.careLinkServer()).addPathSegments("patient/sso/login")
+        url = new HttpUrl.Builder().scheme("https").host(this.careLinkServer()).addPathSegments(CARELINK_LOGIN_PATH_SEGMENT)
                 .addQueryParameter("country", this.carelinkCountry).addQueryParameter("lang", CARELINK_LANGUAGE_EN)
                 .build();
-
-        System.out.println("url: " + url);
 
         requestBuilder = new Request.Builder().url(url);
 
@@ -237,7 +235,7 @@ public class CareLinkClient {
 
         return this.httpClient.newCall(requestBuilder.build()).execute();
 
-    }
+        }
 
     protected Response doLogin(Response loginSessionResponse) throws IOException {
 
@@ -295,29 +293,73 @@ public class CareLinkClient {
 
     }
 
+    protected void getNewAuthorizationToken() {
+
+        // Get existing auth token
+        String authToken = ((SimpleOkHttpCookieJar) httpClient.cookieJar()).getCookies(CARELINK_AUTH_TOKEN_COOKIE_NAME).get(0).value();
+
+        if (authToken != null) {
+
+            authToken = "Bearer" + " " + authToken;
+
+            Response reauthResponse = null;
+            Request.Builder requestBuilder = null;
+
+            HttpUrl url = new HttpUrl.Builder().scheme("https").host(this.careLinkServer())
+                    .addPathSegments(CARELINK_AUTH_PATH_SEGMENT).addQueryParameter("locale", CARELINK_LOCALE_EN)
+                    .addQueryParameter("country", this.carelinkCountry).build();
+
+            // Create request for URL with authToken
+            requestBuilder = new Request.Builder().url(url).addHeader("Authorization", authToken);
+
+            RequestBody requestBody = null;
+            Gson gson = null;
+            JsonObject userJson = null;
+
+            // Build user json for request
+            userJson = new JsonObject();
+            gson = new GsonBuilder().create();
+
+            requestBody = RequestBody.create(gson.toJson(userJson), MediaType.get("application/json; charset=utf-8"));
+
+            requestBuilder.post(requestBody);
+            this.addHttpHeaders(requestBuilder, RequestType.HtmlPost);
+
+            try {
+                reauthResponse = this.httpClient.newCall(requestBuilder.build()).execute();
+            }
+            catch (IOException e) {
+                lastErrorMessage = e.getMessage();
+            }
+            finally {
+                reauthResponse.close();
+            }
+        }
+    }
+
     protected String getAuthorizationToken() {
 
         // New token is needed:
         // a) no token or about to expire => execute authentication
         // b) last response 401
-        if (!((PersistableOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_AUTH_TOKEN_COOKIE_NAME)
-                || !((PersistableOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_TOKEN_VALIDTO_COOKIE_NAME)
-                || !((new Date(Date.parse(((PersistableOkHttpCookieJar) httpClient.cookieJar())
+        if (!((SimpleOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_AUTH_TOKEN_COOKIE_NAME)
+                || !((SimpleOkHttpCookieJar) httpClient.cookieJar()).contains(CARELINK_TOKEN_VALIDTO_COOKIE_NAME)
+                || !((new Date(Date.parse(((SimpleOkHttpCookieJar) httpClient.cookieJar())
                 .getCookies(CARELINK_TOKEN_VALIDTO_COOKIE_NAME).get(0).value())))
                 .after(new Date(new Date(System.currentTimeMillis()).getTime()
                         + AUTH_EXPIRE_DEADLINE_MINUTES * 60000)))
                 || this.lastResponseCode == 401
         ) {
-            // TODO: How to skip login if already have token
 
             //execute new login process | null, if error OR already doing login
-            if(this.loginInProcess || !this.executeLoginProcedure())
+            if(this.loginInProcess)
                 return null;
-
+            else
+                getNewAuthorizationToken();
         }
 
         // there can be only one
-        return "Bearer" + " " + ((PersistableOkHttpCookieJar) httpClient.cookieJar()).getCookies(CARELINK_AUTH_TOKEN_COOKIE_NAME).get(0).value();
+        return "Bearer" + " " + ((SimpleOkHttpCookieJar) httpClient.cookieJar()).getCookies(CARELINK_AUTH_TOKEN_COOKIE_NAME).get(0).value();
 
     }
 
